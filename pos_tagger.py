@@ -1,9 +1,11 @@
 from multiprocessing import Pool
+from constants import *
 import numpy as np
 import time
 from utils import *
+from itertools import tee
 
-
+from typing import List
 
 """ Contains the part of speech tagger class. """
 
@@ -80,9 +82,10 @@ def evaluate(data, model):
 
 
 class POSTagger():
-    def __init__(self):
+    def __init__(self, smoothing_method=None):
         """Initializes the tagger model parameters and anything else necessary. """
-        pass
+        self.smoothing_method = smoothing_method
+
     
     
     def get_unigrams(self):
@@ -90,8 +93,8 @@ class POSTagger():
         Computes unigrams. 
         Tip. Map each tag to an integer and store the unigrams in a numpy array. 
         """
-        ## TODO
-        pass
+        unigrams = [sum(x.count(tag) for x in self.data_tags) / self.vocab_size for tag in self.all_tags]
+        self.unigrams = np.array(unigrams)
 
     def get_bigrams(self):        
         """
@@ -99,16 +102,47 @@ class POSTagger():
         Tip. Map each tag to an integer and store the bigrams in a numpy array
              such that bigrams[index[tag1], index[tag2]] = Prob(tag2|tag1). 
         """
-        ## TODO
-        pass
+        if self.unigrams is None:
+           self.get_unigrams()
+        bigrams = np.zeros((len(self.all_tags), len(self.all_tags)))
+        def pairwise(iterable):
+            "s -> (s0,s1), (s1,s2), (s2, s3), ..."
+            a, b = tee(iterable)
+            next(b, None)
+            return zip(a, b) 
+        for document in self.data_tags:
+            for curr, next in pairwise(document):
+                if self.smoothing_method == LAPLACE:
+                    bigrams[self.tag2idx[curr], self.tag2idx[next]] += 1 / (LAPLACE_FACTOR + self.unigrams[self.tag2idx[curr]] * self.vocab_size)
+                else: 
+                    bigrams[self.tag2idx[curr], self.tag2idx[next]] += 1 / (self.unigrams[self.tag2idx[curr]] * self.vocab_size)
+        if self.smoothing_method == LAPLACE:
+            bigrams += LAPLACE_FACTOR / self.vocab_size
+            # bigrams = np.apply_along_axis(lambda row: row + , axis=1, arr=bigrams)
+        self.bigrams = bigrams
     
     def get_trigrams(self):
         """
         Computes trigrams. 
         Tip. Similar logic to unigrams and bigrams. Store in numpy array. 
         """
-        ## TODO
-        pass
+        trigrams = np.zeros((len(self.all_tags), len(self.all_tags), len(self.all_tags)))
+        def triplewise(iterable):
+            "s -> (s0,s1,s2), (s1,s2,s3), (s2, s3, s4), ..."
+            a, b, c = tee(iterable, 3)
+            next(b, None)
+            next(c, None)
+            next(c, None)
+            return zip(a, b, c) 
+        for document in self.data_tags:
+            for curr, next, nextnext in triplewise(document):
+                if self.smoothing_method == LAPLACE:
+                    trigrams[self.tag2idx[curr], self.tag2idx[next], self.tag2idx[nextnext]] += 1 / (LAPLACE_FACTOR + self.bigrams[self.tag2idx[curr], self.tag2idx[next]] * self.unigrams[self.tag2idx[curr]] * self.vocab_size)
+                else: 
+                    trigrams[self.tag2idx[curr], self.tag2idx[next], self.tag2idx[nextnext]] += 1 / (self.bigrams[self.tag2idx[curr], self.tag2idx[next]] * self.unigrams[self.tag2idx[curr]] * self.vocab_size)
+        if self.smoothing_method == LAPLACE:
+            trigrams += LAPLACE_FACTOR / self.vocab_size
+        self.trigrams = trigrams
     
     
     def get_emissions(self):
@@ -117,11 +151,14 @@ class POSTagger():
         Tip. Map each tag to an integer and each word in the vocabulary to an integer. 
              Then create a numpy array such that lexical[index(tag), index(word)] = Prob(word|tag) 
         """
-        ## TODO
-        pass  
+        lexical = np.zeros((len(self.all_tags), len(self.all_words)))
+        for document_words, document_tags in zip(self.data_words, self.data_tags):
+            for word, tag in zip(document_words, document_tags):
+                lexical[self.tag2idx[tag], self.word2idx[word]] += 1 / len(self.all_tags)
+        self.lexical = lexical 
     
 
-    def train(self, data):
+    def train(self, data, ngram=2):
         """Trains the model by computing transition and emission probabilities.
 
         You should also experiment:
@@ -130,11 +167,18 @@ class POSTagger():
         
         """
         self.data = data
+        self.data_words : List[List[str]] = data[0]
+        self.data_tags : List[List[str]] = data[1]
         self.all_tags = list(set([t for tag in data[1] for t in tag]))
         self.tag2idx = {self.all_tags[i]:i for i in range(len(self.all_tags))}
         self.idx2tag = {v:k for k,v in self.tag2idx.items()}
-        ## TODO
-        pass
+
+        self.all_words = list(set([word for sentence in self.data_words for word in sentence]))
+        self.word2idx = {self.all_words[i]:i for i in range(len(self.all_words))}
+        self.idx2word = {v:k for k,v in self.word2idx.items()}
+
+        self.vocab_size = sum(len(d) for d in self.data_words)
+
 
     def sequence_probability(self, sequence, tags):
         """Computes the probability of a tagged sequence given the emission/transition
@@ -155,7 +199,6 @@ class POSTagger():
         """
         ## TODO
         return []
-
 
 if __name__ == "__main__":
     pos_tagger = POSTagger()

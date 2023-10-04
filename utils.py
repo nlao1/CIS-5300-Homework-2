@@ -1,9 +1,9 @@
+from constants import *
 import pandas as pd
 from tqdm import tqdm 
 import numpy as np
 import seaborn as sn
 import matplotlib.pyplot as plt
-from constants import *
 
 
 def infer_sentences(model, sentences, start):
