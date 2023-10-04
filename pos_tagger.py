@@ -85,6 +85,10 @@ class POSTagger():
     def __init__(self, smoothing_method=None):
         """Initializes the tagger model parameters and anything else necessary. """
         self.smoothing_method = smoothing_method
+        self.unigrams = None
+        self.bigrams = None
+        self.trigrams = None
+        self.num_words = -1
 
     
     
@@ -93,7 +97,7 @@ class POSTagger():
         Computes unigrams. 
         Tip. Map each tag to an integer and store the unigrams in a numpy array. 
         """
-        unigrams = [sum(x.count(tag) for x in self.data_tags) / self.vocab_size for tag in self.all_tags]
+        unigrams = [sum(x.count(tag) for x in self.data_tags) / self.num_words for tag in self.all_tags]
         self.unigrams = np.array(unigrams)
 
     def get_bigrams(self):        
@@ -111,14 +115,22 @@ class POSTagger():
             next(b, None)
             return zip(a, b) 
         for document in self.data_tags:
-            for curr, next in pairwise(document):
+            for curr, next_word in pairwise(document):
                 if self.smoothing_method == LAPLACE:
-                    bigrams[self.tag2idx[curr], self.tag2idx[next]] += 1 / (LAPLACE_FACTOR + self.unigrams[self.tag2idx[curr]] * self.vocab_size)
+                    bigrams[self.tag2idx[curr], self.tag2idx[next_word]] += 1 / (LAPLACE_FACTOR + self.unigrams[self.tag2idx[curr]] * self.num_words)
                 else: 
-                    bigrams[self.tag2idx[curr], self.tag2idx[next]] += 1 / (self.unigrams[self.tag2idx[curr]] * self.vocab_size)
+                    bigrams[self.tag2idx[curr], self.tag2idx[next_word]] += 1 / (self.unigrams[self.tag2idx[curr]] * self.num_words)
         if self.smoothing_method == LAPLACE:
-            bigrams += LAPLACE_FACTOR / self.vocab_size
-            # bigrams = np.apply_along_axis(lambda row: row + , axis=1, arr=bigrams)
+            for i in range(len(bigrams)):
+                bigrams[i] += LAPLACE_FACTOR / len(self.all_tags) / (self.unigrams[i] * self.num_words + LAPLACE_FACTOR)
+        elif self.smoothing_method == INTERPOLATION:
+            lambda_1, lambda_2 = BIGRAM_LAMBDAS
+            for i in range(len(bigrams)):
+                for j in range(len(bigrams[i])):
+                    bigrams[i,j] = lambda_1 * bigrams[i,j] + lambda_2 * self.unigrams[j]
+
+
+
         self.bigrams = bigrams
     
     def get_trigrams(self):
@@ -135,13 +147,19 @@ class POSTagger():
             next(c, None)
             return zip(a, b, c) 
         for document in self.data_tags:
-            for curr, next, nextnext in triplewise(document):
+            for curr, next_word, nextnext_word in triplewise(document):
                 if self.smoothing_method == LAPLACE:
-                    trigrams[self.tag2idx[curr], self.tag2idx[next], self.tag2idx[nextnext]] += 1 / (LAPLACE_FACTOR + self.bigrams[self.tag2idx[curr], self.tag2idx[next]] * self.unigrams[self.tag2idx[curr]] * self.vocab_size)
+                    trigrams[self.tag2idx[curr], self.tag2idx[next_word], self.tag2idx[nextnext_word]] += 1 / (LAPLACE_FACTOR + self.bigrams[self.tag2idx[curr], self.tag2idx[next_word]] * self.unigrams[self.tag2idx[curr]] * self.num_words)
                 else: 
-                    trigrams[self.tag2idx[curr], self.tag2idx[next], self.tag2idx[nextnext]] += 1 / (self.bigrams[self.tag2idx[curr], self.tag2idx[next]] * self.unigrams[self.tag2idx[curr]] * self.vocab_size)
+                    trigrams[self.tag2idx[curr], self.tag2idx[next_word], self.tag2idx[nextnext_word]] += 1 / (self.bigrams[self.tag2idx[curr], self.tag2idx[next_word]] * self.unigrams[self.tag2idx[curr]] * self.num_words)
         if self.smoothing_method == LAPLACE:
-            trigrams += LAPLACE_FACTOR / self.vocab_size
+            trigrams += LAPLACE_FACTOR / self.num_words
+        elif self.smoothing_method == INTERPOLATION:
+            lambda_1, lambda_2, lambda_3 = TRIGRAM_LAMBDAS
+            for i in range(len(trigrams)):
+                for j in range(len(trigrams[i])):
+                    for k in range(len(trigrams[i,j])):
+                        trigrams[i,j,k] = lambda_1 * trigrams[i,j,k] + lambda_2 * self.bigrams[j,k] + lambda_3 * self.unigrams[k]
         self.trigrams = trigrams
     
     
@@ -176,8 +194,9 @@ class POSTagger():
         self.all_words = list(set([word for sentence in self.data_words for word in sentence]))
         self.word2idx = {self.all_words[i]:i for i in range(len(self.all_words))}
         self.idx2word = {v:k for k,v in self.word2idx.items()}
-
-        self.vocab_size = sum(len(d) for d in self.data_words)
+        self.num_words = sum(len(d) for d in self.data_words)
+        self.get_bigrams()
+        print(self.bigrams)
 
 
     def sequence_probability(self, sequence, tags):
@@ -201,7 +220,7 @@ class POSTagger():
         return []
 
 if __name__ == "__main__":
-    pos_tagger = POSTagger()
+    pos_tagger = POSTagger(INTERPOLATION)
 
     train_data = load_data("data/train_x.csv", "data/train_y.csv")
     dev_data = load_data("data/dev_x.csv", "data/dev_y.csv")
