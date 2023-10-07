@@ -60,7 +60,7 @@ def load_data(sentence_file, tag_file=None):
     Suggested to split the data by the document-start symbol.
 
     """
-    df_sentences = pd.read_csv(open(sentence_file))
+    df_sentences = pd.read_csv(open(sentence_file), keep_default_na=False)
     doc_start_indexes = df_sentences.index[df_sentences['word'] == '-DOCSTART-'].tolist()
     num_sentences = len(doc_start_indexes)
 
@@ -79,18 +79,15 @@ def load_data(sentence_file, tag_file=None):
         sent = []
         tag = []
         for j in range(index, next_index):
+            # Check the data type of the word and output the word and j if it is not a string
             word = df_sentences['word'][j].strip()
             if not CAPITALIZATION or word == '-DOCSTART-':
                 word = word.lower()
             sent.append(word)
             if tag_file:
                 tag.append((df_tags['tag'][j]))
-        if STOP_WORD:
-            sent.append('<STOP>')
         sentences.append(sent)
         if tag_file: 
-            if STOP_WORD:           
-                tag.append('<STOP>')
             tags.append(tag)
 
     if tag_file:

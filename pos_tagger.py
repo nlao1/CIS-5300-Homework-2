@@ -82,12 +82,14 @@ def evaluate(data, model):
 
 
 class POSTagger():
-    def __init__(self, smoothing_method=None):
+    def __init__(self, inference_method, smoothing_method=None):
         """Initializes the tagger model parameters and anything else necessary. """
         self.smoothing_method = smoothing_method
+        self.inference_method = inference_method
         self.unigrams = None
         self.bigrams = None
         self.trigrams = None
+        self.lexical = None
         self.num_words = -1
 
     
@@ -128,9 +130,6 @@ class POSTagger():
             for i in range(len(bigrams)):
                 for j in range(len(bigrams[i])):
                     bigrams[i,j] = lambda_1 * bigrams[i,j] + lambda_2 * self.unigrams[j]
-
-
-
         self.bigrams = bigrams
     
     def get_trigrams(self):
@@ -138,6 +137,8 @@ class POSTagger():
         Computes trigrams. 
         Tip. Similar logic to unigrams and bigrams. Store in numpy array. 
         """
+        if self.bigrams is None:
+           self.get_bigrams()
         trigrams = np.zeros((len(self.all_tags), len(self.all_tags), len(self.all_tags)))
         def triplewise(iterable):
             "s -> (s0,s1,s2), (s1,s2,s3), (s2, s3, s4), ..."
@@ -195,16 +196,43 @@ class POSTagger():
         self.word2idx = {self.all_words[i]:i for i in range(len(self.all_words))}
         self.idx2word = {v:k for k,v in self.word2idx.items()}
         self.num_words = sum(len(d) for d in self.data_words)
-        self.get_bigrams()
-        print(self.bigrams)
+        self.get_trigrams()
 
 
     def sequence_probability(self, sequence, tags):
         """Computes the probability of a tagged sequence given the emission/transition
         probabilities.
         """
+        # TODO: change 
+        if self.unigrams is None:
+            self.get_unigrams()
+        if self.lexical is None:
+            self.get_emissions()
+        # TODO: consider working in log space
+        log_probability = 0
+        for tag, word in zip(tags, sequence):
+            # handle unknown words
+            if word not in self.word2idx.keys():
+                return 0
+            log_probability += np.log(self.lexical[self.tag2idx[tag], self.word2idx[word]])
+            log_probability += np.log(self.unigrams[self.tag2idx[tag]])
+        return np.exp(log_probability)
         ## TODO
-        return 0.
+
+    def greedy(self, sequence):
+        """Decodes the most likely sequence using greedy decoding."""
+        if self.lexical is None:
+            self.get_emissions()
+        current_sentence = []
+        result = []
+        for word in sequence:
+            if word not in self.word2idx:
+                best_tag = 'NNP'
+            else: 
+                best_tag = self.idx2tag[np.argmax(self.lexical[:, self.word2idx[word]])]
+            current_sentence.append(word)
+            result.append(best_tag)
+        return result
 
     def inference(self, sequence):
         """Tags a sequence with part of speech tags.
@@ -216,11 +244,13 @@ class POSTagger():
             - decoding with beam search
             - viterbi
         """
+        if self.inference_method == GREEDY:
+            return self.greedy(sequence)
         ## TODO
         return []
 
 if __name__ == "__main__":
-    pos_tagger = POSTagger(INTERPOLATION)
+    pos_tagger = POSTagger(GREEDY, smoothing_method=LAPLACE)
 
     train_data = load_data("data/train_x.csv", "data/train_y.csv")
     dev_data = load_data("data/dev_x.csv", "data/dev_y.csv")
