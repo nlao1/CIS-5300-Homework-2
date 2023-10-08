@@ -174,7 +174,8 @@ class POSTagger():
         lexical = np.zeros((len(self.all_tags), len(self.all_words)))
         for document_words, document_tags in zip(self.data_words, self.data_tags):
             for word, tag in zip(document_words, document_tags):
-                lexical[self.tag2idx[tag], self.word2idx[word]] -= np.log(self.num_words)
+                lexical[self.tag2idx[tag], self.word2idx[word]] += 1
+        lexical = np.log(lexical) - np.log(self.num_words)
         lexical = lexical - np.log(self.unigrams.reshape(-1,1))
         self.lexical = np.exp(lexical)
 
@@ -285,24 +286,24 @@ class POSTagger():
         best_tags = []
         if self.ngram == 1:
             best_tag_indices = np.argsort(self.lexical[:, self.word2idx[word]] * self.bigrams[self.tag2idx[prev_tag], :])[-BEAM_K:]
-            best_tags = self.idx2tag[best_tag_indices]
+            best_tags = [self.idx2tag[index] for index in best_tag_indices]
         elif self.ngram == 2:
             if prev_tag is None:
                 for i in range(BEAM_K):
                     best_tags.append('O')
             else:
                 best_tag_indices = np.argsort(self.lexical[:, self.word2idx[word]] * self.bigrams[self.tag2idx[prev_tag], :])[-BEAM_K:]
-                best_tags = self.idx2tag[best_tag_indices]
+                best_tags = [self.idx2tag[index] for index in best_tag_indices]
         elif self.ngram == 3:
             if prev_tag is None: 
                 for i in range(BEAM_K):
                     best_tags.append('O')
             elif prev_prev_tag is None:
                 best_tag_indices = np.argsort(self.lexical[:, self.word2idx[word]] * self.bigrams[self.tag2idx[prev_tag], :])[-BEAM_K:]
-                best_tags = self.idx2tag[best_tag_indices]
+                best_tags = [self.idx2tag[index] for index in best_tag_indices]
             else: 
                 best_tag_indices = np.argsort(self.lexical[:, self.word2idx[word]] * self.trigrams[self.tag2idx[prev_prev_tag], self.tag2idx[prev_tag], :])[-BEAM_K:]
-                best_tags = self.idx2tag[best_tag_indices]
+                best_tags = [self.idx2tag[index] for index in best_tag_indices]
         return best_tags
     
     def beam_search(self, sequence):
@@ -330,8 +331,10 @@ class POSTagger():
                     prev_tag = None
                     if len(k_results[0]) >= 1:
                         prev_tag = k_results[i][-1]
+                        print(prev_tag)
                     if len(k_results[0]) >= 2:
                         prev_prev_tag = k_results[i][-2]
+                        print(prev_prev_tag)
                     best_k_tags = self.get_beam_search_best_tag(word, prev_tag, prev_prev_tag)   
                     for tag in best_k_tags:
                         k_square_temp.append(k_results[i] + [tag])
@@ -358,7 +361,7 @@ class POSTagger():
         return []
 
 if __name__ == "__main__":
-    pos_tagger = POSTagger(GREEDY, smoothing_method=INTERPOLATION)
+    pos_tagger = POSTagger(BEAM, smoothing_method=INTERPOLATION)
 
     train_data = load_data("data/train_x.csv", "data/train_y.csv")
     dev_data = load_data("data/dev_x.csv", "data/dev_y.csv")
