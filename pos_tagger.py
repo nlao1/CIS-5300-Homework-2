@@ -331,18 +331,17 @@ class POSTagger():
                     prev_tag = None
                     if len(k_results[0]) >= 1:
                         prev_tag = k_results[i][-1]
-                        print(prev_tag)
                     if len(k_results[0]) >= 2:
                         prev_prev_tag = k_results[i][-2]
-                        print(prev_prev_tag)
                     best_k_tags = self.get_beam_search_best_tag(word, prev_tag, prev_prev_tag)   
                     for tag in best_k_tags:
                         k_square_temp.append(k_results[i] + [tag])
                 k_square_temp_with_pr = list(map(lambda x: (x, self.sequence_probability(x,sequence[:i+1])), k_square_temp))
-                sorted(k_square_temp_with_pr, reverse=True, key= lambda x: x[1])
-                k_results = k_square_temp_with_pr[:BEAM_K + 1]  
+                sorted(k_square_temp_with_pr, key= lambda x: x[1])
+                k_results = k_square_temp_with_pr[-BEAM_K:]  
+                k_results = list(map(lambda x: x[0], k_results))
                 k_square_temp = []
-        return k_results
+        return k_results[-1]
 
     def inference(self, sequence):
         """Tags a sequence with part of speech tags.
@@ -360,7 +359,7 @@ class POSTagger():
             return self.beam_search(sequence)
 
 if __name__ == "__main__":
-    pos_tagger = POSTagger(GREEDY, smoothing_method=INTERPOLATION)
+    pos_tagger = POSTagger(BEAM, smoothing_method=INTERPOLATION)
 
     train_data = load_data("data/train_x.csv", "data/train_y.csv")
     dev_data = load_data("data/dev_x.csv", "data/dev_y.csv")
