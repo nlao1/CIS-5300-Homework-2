@@ -90,7 +90,6 @@ class POSTagger():
         self.bigrams = None
         self.trigrams = None
         self.lexical = None
-        self.ngram = None
         self.num_words = -1
 
     
@@ -200,7 +199,6 @@ class POSTagger():
         self.word2idx = {self.all_words[i]:i for i in range(len(self.all_words))}
         self.idx2word = {v:k for k,v in self.word2idx.items()}
         self.num_words = sum(len(d) for d in self.data_words)
-        self.ngram = ngram
         self.get_trigrams()
 
 
@@ -209,76 +207,33 @@ class POSTagger():
         probabilities.
         """
         # TODO: change 
-        if self.trigrams is None:
-            self.get_trigrams()
+        if self.unigrams is None:
+            self.get_unigrams()
         if self.lexical is None:
             self.get_emissions()
+        # TODO: consider working in log space
         log_probability = 0
-        prev_prev_tag = None
-        prev_tag = None
         for tag, word in zip(tags, sequence):
             # handle unknown words
             if word not in self.word2idx.keys():
                 return 0
             log_probability += np.log(self.lexical[self.tag2idx[tag], self.word2idx[word]])
-            if self.ngram == 1:
-                log_probability += np.log(self.unigrams[self.tag2idx[tag]])
-            elif self.ngram == 2:
-                if prev_tag == None:
-                    pass
-                else:
-                    log_probability += np.log(self.bigrams[self.tag2idx[prev_tag],self.tag2idx[tag]])
-            else: 
-                if prev_prev_tag == None:
-                    if prev_tag == None:
-                        pass
-                    else:
-                        log_probability += np.log(self.bigrams[self.tag2idx[prev_tag],self.tag2idx[tag]])
-                else:
-                    log_probability += np.log(self.trigrams[self.tag2idx[prev_prev_tag],self.tag2idx[prev_tag],self.tag2idx[tag]])
-            prev_prev_tag = prev_tag
-            prev_tag = tag
+            log_probability += np.log(self.unigrams[self.tag2idx[tag]])
         return np.exp(log_probability)
-    
-    def get_greedy_best_tag(self, word, prev_tag, prev_prev_tag):
-        best_tag = None
-        if self.ngram == 1:
-            best_tag = self.idx2tag[np.argmax(self.lexical[:, self.word2idx[word]] * self.unigrams)]
-        elif self.ngram == 2:
-            if prev_tag is None:
-                best_tag = 'O'
-            else:
-                best_tag_index = np.argmax(self.lexical[:, self.word2idx[word]] * self.bigrams[self.tag2idx[prev_tag], :])
-                best_tag = self.idx2tag[best_tag_index]
-            prev_tag = best_tag
-        elif self.ngram == 3:
-            if prev_tag is None: 
-                best_tag = 'O'
-            elif prev_prev_tag is None:
-                best_tag_index = np.argmax(self.lexical[:, self.word2idx[word]] * self.bigrams[self.tag2idx[prev_tag], :]) 
-                best_tag = self.idx2tag[best_tag_index]
-            else: 
-                best_tag_index = np.argmax(self.lexical[:, self.word2idx[word]] * self.trigrams[self.tag2idx[prev_prev_tag], self.tag2idx[prev_tag], :])
-                best_tag = self.idx2tag[best_tag_index]
-            prev_prev_tag = prev_tag
-            prev_tag = best_tag
-        return best_tag, prev_tag, prev_prev_tag
+        ## TODO
 
     def greedy(self, sequence):
         """Decodes the most likely sequence using greedy decoding."""
         if self.lexical is None:
             self.get_emissions()
-        if self.trigrams is None:
-            self.get_trigrams()
-        prev_prev_tag = None
-        prev_tag = None
+        current_sentence = []
         result = []
-        for i, word in enumerate(sequence):
-            best_tag = None
+        for word in sequence:
             if word not in self.word2idx:
                 best_tag = 'NNP'
             else: 
-                best_tag, prev_tag, prev_prev_tag = self.get_greedy_best_tag(word, prev_tag, prev_prev_tag)
+                best_tag = self.idx2tag[np.argmax(self.lexical[:, self.word2idx[word]])]
+            current_sentence.append(word)
             result.append(best_tag)
         return result
     
@@ -355,19 +310,21 @@ class POSTagger():
         """
         if self.inference_method == GREEDY:
             return self.greedy(sequence)
-        elif self.inference_method == BEAM:
-            return self.beam_search(sequence)
         ## TODO
         return []
 
 if __name__ == "__main__":
+<<<<<<< HEAD
     pos_tagger = POSTagger(BEAM, smoothing_method=INTERPOLATION)
+=======
+    pos_tagger = POSTagger(GREEDY, smoothing_method=LAPLACE)
+>>>>>>> parent of f610743... working on beam
 
     train_data = load_data("data/train_x.csv", "data/train_y.csv")
     dev_data = load_data("data/dev_x.csv", "data/dev_y.csv")
     test_data = load_data("data/test_x.csv")
 
-    pos_tagger.train(train_data, ngram=3)
+    pos_tagger.train(train_data)
 
     # Experiment with your decoder using greedy decoding, beam search, viterbi...
 
