@@ -256,6 +256,8 @@ class POSTagger():
         lexical = lexical - np.log(self.unigrams.reshape(-1,1))
         self.lexical = np.exp(lexical)
 
+    
+
     def train(self, data, ngram=2):
         """Trains the model by computing transition and emission probabilities.
 
@@ -493,7 +495,7 @@ class POSTagger():
             return self.viterbi(sequence)
 
 if __name__ == "__main__":
-    pos_tagger = POSTagger(GREEDY, smoothing_method=INTERPOLATION)
+    pos_tagger = POSTagger(VITERBI, smoothing_method=LAPLACE)
 
     train_data = load_data("data/train_x.csv", "data/train_y.csv")
     dev_data = load_data("data/dev_x.csv", "data/dev_y.csv")
