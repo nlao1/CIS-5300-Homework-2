@@ -2,14 +2,93 @@ from multiprocessing import Pool
 from constants import *
 import numpy as np
 import time
+import string
 from utils import *
 from itertools import tee
-
+import gensim
+from gensim.models import Word2Vec
+from gensim.models import FastText
 from typing import List
+from sklearn import svm
+from sklearn.neural_network import MLPClassifier
+from gensim.models.fasttext import load_facebook_vectors
 
 """ Contains the part of speech tagger class. """
 
+def flatten_data(data_words, data_tags):
+    flattened_words = [word for sentence in data_words for word in sentence]
+    flattened_tags = [tag for tag_list in data_tags for tag in tag_list]
+    return flattened_words, flattened_tags
 
+def has_numbers(inputString):
+    return any(char.isdigit() for char in inputString)
+
+def contains_dash(inputString):
+    return '-' in inputString
+
+def is_punctuation(word):
+    return word in string.punctuation
+
+class POSTagger_MLP():
+    def __init__(self,documents):
+        """Initializes the tagger model parameters and anything else necessary. """
+        # Train Word2Vec model
+        #model = Word2Vec(documents, vector_size=300, window=4, min_count=1, workers=4)
+        # Save model
+        #model.save("my_word2vec_model.model")
+        # Load model
+        #self.model = Word2Vec.load("my_word2vec_model.model")
+        model_path = "./GoogleNews-vectors-negative300.bin"
+        self.model = gensim.models.KeyedVectors.load_word2vec_format(model_path, binary=True)
+        #self.model = load_facebook_vectors('./cc.en.300.bin')
+    def train(self,train_x,train_y):
+        #get the words & tag labels and create feature vectors with word2vec
+        filtered_words = []
+        filtered_labels = []
+        for word, label in zip(train_x, train_y):
+            if word == '-docstart-' or word == 'a' or word == 'of' or word == 'and' or word == 'to':
+                #print("ah")
+                pass
+            elif has_numbers(word):
+                #print( "ah!")
+                pass
+            elif is_punctuation(word):
+                pass
+                #print("ah~")
+            elif contains_dash(word):
+                vectors = self.get_word_vectors(word.split('-'))
+                filtered_words.append(np.sum(vectors,axis=0)/len(vectors))
+                filtered_labels.append(label)
+            else:
+                vector = self.get_word_vector(word)
+                # if np.any(vector):  # Check if the vector is non-zero
+                filtered_words.append(vector)  # Store the vector instead of the word
+                filtered_labels.append(label)
+        self.clf = MLPClassifier(hidden_layer_sizes=(100,50),max_iter=300)
+        self.clf.fit(filtered_words[:10000],filtered_labels[:10000])
+
+    def predict_words(self,words):
+        vector_words = self.get_word_vectors(words)
+        return self.clf.predict(vector_words)
+
+    def predict_word(self,word):
+        vector_word = self.get_word_vector(word)
+        return self.clf.predict([vector_word])[0]
+    
+    def get_word_vector(self, word, vector_length=300):
+        try:
+            return self.model[word]
+        except KeyError:
+            # Handle the case where the word is not in the vocabulary
+            #print(f"{word} not found in word2vec")
+            return np.zeros(vector_length)
+
+    def get_word_vectors(self, words, vector_length=300):
+        vectors = []
+        for word in words:
+            vectors.append(self.get_word_vector(word,vector_length))
+        return vectors
+    
 def evaluate(data, model):
     """Evaluates the POS model on some sentences and gold tags.
 
@@ -93,8 +172,6 @@ class POSTagger():
         self.ngram = None
         self.num_words = -1
 
-    
-    
     def get_unigrams(self):
         """
         Computes unigrams. 
@@ -175,11 +252,9 @@ class POSTagger():
         for document_words, document_tags in zip(self.data_words, self.data_tags):
             for word, tag in zip(document_words, document_tags):
                 lexical[self.tag2idx[tag], self.word2idx[word]] += 1
-        lexical = np.log(lexical) - np.log(self.num_words)
+        lexical = np.log(lexical) - np.log(LAPLACE_FACTOR + self.num_words)
         lexical = lexical - np.log(self.unigrams.reshape(-1,1))
         self.lexical = np.exp(lexical)
-
-    
 
     def train(self, data, ngram=2):
         """Trains the model by computing transition and emission probabilities.
@@ -201,8 +276,10 @@ class POSTagger():
         self.idx2word = {v:k for k,v in self.word2idx.items()}
         self.num_words = sum(len(d) for d in self.data_words)
         self.ngram = ngram
+        self.clf = POSTagger_MLP(data[0])
+        train_x, train_y = flatten_data(data[0],data[1])
+        self.clf.train(train_x,train_y)
         self.get_trigrams()
-
 
     def sequence_probability(self, sequence, tags):
         """Computes the probability of a tagged sequence given the emission/transition
@@ -240,6 +317,9 @@ class POSTagger():
             prev_tag = tag
         return np.exp(log_probability)
     
+    def get_tag_of_unknown(self, word):
+        return self.clf.predict(word)
+
     def get_greedy_best_tag(self, word, prev_tag, prev_prev_tag):
         best_tag = None
         if self.ngram == 1:
@@ -276,7 +356,11 @@ class POSTagger():
         for i, word in enumerate(sequence):
             best_tag = None
             if word not in self.word2idx:
-                best_tag = 'NNP'
+                #best_tag = 'NNP'
+                if has_numbers(word):
+                    best_tag = 'CD'
+                else:
+                    best_tag = self.clf.predict_word(word)
             else: 
                 best_tag, prev_tag, prev_prev_tag = self.get_greedy_best_tag(word, prev_tag, prev_prev_tag)
             result.append(best_tag)
@@ -342,6 +426,54 @@ class POSTagger():
                 k_results = list(map(lambda x: x[0], k_results))
                 k_square_temp = []
         return k_results[-1]
+    
+    def viterbi_bigram(self, sequence):
+        result = [None for _ in range(len(sequence))]
+        pis = np.full((len(self.all_tags), len(sequence)), -np.inf)
+        bps = np.full((len(self.all_tags), len(sequence)), None)
+        # initialize first column
+        pis[self.tag2idx['O'],0] = 0
+        for i in range(1, len(sequence)):
+            if sequence[i] not in self.word2idx.keys():
+                # handle unknown here
+                #predict 'NNP'
+                nnp_index = self.tag2idx['NNP']
+                pis[nnp_index,i] = np.max((pis[:,i-1] + np.log(self.bigrams[:, nnp_index])))
+                bps[nnp_index,i] = np.argmax((pis[:,i-1] + np.log(self.bigrams[:, nnp_index])))
+                continue
+            for tag in self.all_tags:
+                tag_idx = self.tag2idx[tag]
+                emission = self.lexical[tag_idx, self.word2idx[sequence[i]]]
+                best_prev_tag = np.argmax(pis[:,i-1] + np.log(self.bigrams[:,tag_idx]))
+                best_pi = np.max(pis[:,i-1] + np.log(self.bigrams[:,tag_idx]))
+                pis[tag_idx, i] = np.log(emission) + best_pi
+                bps[tag_idx, i] = best_prev_tag
+            # print(bps[:, i], sequence[i])
+        best_final_tag_idx = np.argmax(pis[:,len(sequence)-1])
+        result[len(sequence)-1] = self.idx2tag[best_final_tag_idx]
+        best_prev_tag_idx = int(bps[best_final_tag_idx, len(sequence)-1])
+        for i in range(len(sequence)-2, 0, -1):
+            result[i] = self.idx2tag[best_prev_tag_idx]
+            best_prev_tag_idx = int(bps[best_prev_tag_idx,i])
+        result[0] = self.idx2tag[best_prev_tag_idx]
+        return result
+
+    def viterbi_trigram(self, sequence):
+        pis = np.zeros((len(self.all_tags) * len(self.all_tags), len(sequence)))
+        bps = np.zeros((len(self.all_tags) * len(self.all_tags), len(sequence)))
+        pass
+    def viterbi(self, sequence):
+        if self.lexical is None:
+            self.get_emissions()
+        if self.trigrams is None:
+            self.get_trigrams()
+        if self.ngram == 2: 
+            return self.viterbi_bigram(sequence)
+        elif self.ngram == 3:
+            return self.viterbi_trigram(sequence)
+
+
+
 
     def inference(self, sequence):
         """Tags a sequence with part of speech tags.
@@ -357,15 +489,17 @@ class POSTagger():
             return self.greedy(sequence)
         elif self.inference_method == BEAM:
             return self.beam_search(sequence)
+        elif self.inference_method == VITERBI:
+            return self.viterbi(sequence)
 
 if __name__ == "__main__":
-    pos_tagger = POSTagger(BEAM, smoothing_method=INTERPOLATION)
+    pos_tagger = POSTagger(GREEDY, smoothing_method=INTERPOLATION)
 
     train_data = load_data("data/train_x.csv", "data/train_y.csv")
     dev_data = load_data("data/dev_x.csv", "data/dev_y.csv")
     test_data = load_data("data/test_x.csv")
 
-    pos_tagger.train(train_data, ngram=3)
+    pos_tagger.train(train_data, ngram=2)
 
     # Experiment with your decoder using greedy decoding, beam search, viterbi...
 
