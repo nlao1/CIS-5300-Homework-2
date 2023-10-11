@@ -175,9 +175,10 @@ class POSTagger():
         for document_words, document_tags in zip(self.data_words, self.data_tags):
             for word, tag in zip(document_words, document_tags):
                 lexical[self.tag2idx[tag], self.word2idx[word]] += 1
-        lexical = np.log(lexical) - np.log(self.num_words)
+        lexical = np.log(lexical) - np.log(LAPLACE_FACTOR + self.num_words)
         lexical = lexical - np.log(self.unigrams.reshape(-1,1))
         self.lexical = np.exp(lexical)
+        self.lexical += LAPLACE_FACTOR / (LAPLACE_FACTOR + self.num_words)
 
     
 
@@ -342,6 +343,54 @@ class POSTagger():
                 k_results = list(map(lambda x: x[0], k_results))
                 k_square_temp = []
         return k_results[-1]
+    
+    def viterbi_bigram(self, sequence):
+        result = [None for _ in range(len(sequence))]
+        pis = np.full((len(self.all_tags), len(sequence)), -np.inf)
+        bps = np.full((len(self.all_tags), len(sequence)), None)
+        # initialize first column
+        pis[self.tag2idx['O'],0] = 0
+        for i in range(1, len(sequence)):
+            if sequence[i] not in self.word2idx.keys():
+                # handle unknown here
+                #predict 'NNP'
+                nnp_index = self.tag2idx['NNP']
+                pis[nnp_index,i] = np.max((pis[:,i-1] + np.log(self.bigrams[:, nnp_index])))
+                bps[nnp_index,i] = np.argmax((pis[:,i-1] + np.log(self.bigrams[:, nnp_index])))
+                continue
+            for tag in self.all_tags:
+                tag_idx = self.tag2idx[tag]
+                emission = self.lexical[tag_idx, self.word2idx[sequence[i]]]
+                best_prev_tag = np.argmax(pis[:,i-1] + np.log(self.bigrams[:,tag_idx]))
+                best_pi = np.max(pis[:,i-1] + np.log(self.bigrams[:,tag_idx]))
+                pis[tag_idx, i] = np.log(emission) + best_pi
+                bps[tag_idx, i] = best_prev_tag
+            # print(bps[:, i], sequence[i])
+        best_final_tag_idx = np.argmax(pis[:,len(sequence)-1])
+        result[len(sequence)-1] = self.idx2tag[best_final_tag_idx]
+        best_prev_tag_idx = int(bps[best_final_tag_idx, len(sequence)-1])
+        for i in range(len(sequence)-2, 0, -1):
+            result[i] = self.idx2tag[best_prev_tag_idx]
+            best_prev_tag_idx = int(bps[best_prev_tag_idx,i])
+        result[0] = self.idx2tag[best_prev_tag_idx]
+        return result
+
+    def viterbi_trigram(self, sequence):
+        pis = np.zeros((len(self.all_tags) * len(self.all_tags), len(sequence)))
+        bps = np.zeros((len(self.all_tags) * len(self.all_tags), len(sequence)))
+        pass
+    def viterbi(self, sequence):
+        if self.lexical is None:
+            self.get_emissions()
+        if self.trigrams is None:
+            self.get_trigrams()
+        if self.ngram == 2: 
+            return self.viterbi_bigram(sequence)
+        elif self.ngram == 3:
+            return self.viterbi_trigram(sequence)
+
+
+
 
     def inference(self, sequence):
         """Tags a sequence with part of speech tags.
@@ -357,15 +406,17 @@ class POSTagger():
             return self.greedy(sequence)
         elif self.inference_method == BEAM:
             return self.beam_search(sequence)
+        elif self.inference_method == VITERBI:
+            return self.viterbi(sequence)
 
 if __name__ == "__main__":
-    pos_tagger = POSTagger(BEAM, smoothing_method=INTERPOLATION)
+    pos_tagger = POSTagger(VITERBI, smoothing_method=LAPLACE)
 
     train_data = load_data("data/train_x.csv", "data/train_y.csv")
     dev_data = load_data("data/dev_x.csv", "data/dev_y.csv")
     test_data = load_data("data/test_x.csv")
 
-    pos_tagger.train(train_data, ngram=3)
+    pos_tagger.train(train_data, ngram=2)
 
     # Experiment with your decoder using greedy decoding, beam search, viterbi...
 
