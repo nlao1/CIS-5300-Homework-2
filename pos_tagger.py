@@ -316,6 +316,9 @@ class POSTagger():
             prev_tag = tag
         return np.exp(log_probability)
 
+    def get_tag_of_unknown(self, word):
+        return self.clf.predict_word(word)
+    
     def get_greedy_best_tag(self, word, prev_tag, prev_prev_tag):
         best_tag = None
         if self.ngram == 1:
