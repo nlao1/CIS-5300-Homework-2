@@ -5,16 +5,18 @@ description = ""
 authors = ["nlao1 <nlao@seas.upenn.edu>"]
 
 [tool.poetry.dependencies]
-python = "^3.8"
+python = "3.8"
 ipython = "7.20.0"
 pandas = "1.2.1" 
 torch = "1.7.1" 
 numpy = "1.20.0" 
-scipy = "1.6.0" 
+scipy = "1.7.0" 
 scikit-learn = "0.24.1" 
 seaborn = "0.11.2" 
 matplotlib = "3.5.0" 
 tqdm = "4.66.1"
+gensim = "4.3.2"
+xgboost = "2.0.0"
 
 [tool.poetry.dev-dependencies]
 
