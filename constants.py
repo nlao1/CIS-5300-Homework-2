@@ -8,7 +8,7 @@ EPSILON = 1e-100
 
 ### Inference Types ###
 GREEDY = 0
-BEAM = 1; BEAM_K = 2
+BEAM = 1; BEAM_K = 3
 VITERBI = 2
 INFERENCE = VITERBI 
 
