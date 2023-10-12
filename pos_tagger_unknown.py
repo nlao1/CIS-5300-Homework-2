@@ -32,13 +32,11 @@ def evaluate(data, model):
     words, tags = flatten_data(data[0],data[1])
     n = len(words)
     k = n//processes
-    n_tokens = sum([len(d) for d in words])
     unk_n_tokens = sum([1 for s in sentences for w in s if w not in model.word2idx.keys()])
     # Identify and isolate sentences with unknown words and their respective tags
     words = [word for word in words if word not in model.word2idx.keys()]
     tags = [tag for word, tag in zip(words, tags) if word not in model.word2idx.keys()]
     predictions = {i:None for i in range(unk_n_tokens)}
-    probabilities = {i:None for i in range(unk_n_tokens)}
          
     start = time.time()
     pool = Pool(processes=processes)
@@ -171,7 +169,7 @@ class POSTagger_MLP():
 
     def predict_word(self,word):
         vector_word = self.get_word_vector(word)
-        #vector_word = self.scaler.fit_transform([vector_word])[0]
+        vector_word = self.scaler.fit_transform([vector_word])[0]
         if self.model_type == "MLP":
             return self.clf.predict([vector_word])[0]
         else:
@@ -182,7 +180,7 @@ class POSTagger_MLP():
     
     def inference(self,word):
         vector_word = self.get_word_vector(word)
-        #scaled_word = self.scaler.fit_transform([vector_word])[0]
+        vector_word = self.scaler.fit_transform([vector_word])[0]
         if self.model_type == "MLP":
             return self.clf.predict([vector_word])[0]
         else:
@@ -260,7 +258,7 @@ class POSTagger_MLP():
                 # if np.any(vector):  # Check if the vector is non-zero
                 filtered_words.append(vector)  # Store the vector instead of the word
                 filtered_labels.append(label)
-        #scaled_data = self.scaler.fit_transform(filtered_words)
+        filtered_words = self.scaler.fit_transform(filtered_words)
         if self.model_type == "MLP":
             self.clf = MLPClassifier(hidden_layer_sizes=(100,100,50),max_iter=300)
             self.clf.fit(np.array(filtered_words), np.array(filtered_labels))

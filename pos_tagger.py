@@ -273,7 +273,7 @@ class POSTagger():
         self.idx2word = {v:k for k,v in self.word2idx.items()}
         self.num_words = sum(len(d) for d in self.data_words)
         self.ngram = ngram
-        self.clf = POSTagger_MLP(data[0], model_type="XGB")
+        self.clf = POSTagger_MLP(data[0], model_type="MLP")
         train_x, train_y = flatten_data(data[0],data[1])
         self.clf.train(np.array(train_x),np.array(train_y))
         #self.clf.load_model('./unknown_tagger.joblib')
