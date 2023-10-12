@@ -581,7 +581,6 @@ class POSTagger():
                 best_pi = np.max(pis[:,i-1] + np.log(self.bigrams[:,tag_idx]))
                 pis[tag_idx, i] = np.log(emission) + best_pi
                 bps[tag_idx, i] = best_prev_tag
-            # print(bps[:, i], sequence[i])
         best_final_tag_idx = np.argmax(pis[:,len(sequence)-1])
         result[len(sequence)-1] = self.idx2tag[best_final_tag_idx]
         best_prev_tag_idx = int(bps[best_final_tag_idx, len(sequence)-1])
@@ -591,10 +590,37 @@ class POSTagger():
         result[0] = self.idx2tag[best_prev_tag_idx]
         return result
 
+   
     def viterbi_trigram(self, sequence):
-        pis = np.zeros((len(self.all_tags) * len(self.all_tags), len(sequence)))
-        bps = np.zeros((len(self.all_tags) * len(self.all_tags), len(sequence)))
-        pass
+        result = [None for _ in range(len(sequence))]
+        pis = np.full((len(self.all_tags) * len(self.all_tags), len(sequence)), -np.inf)
+        bps = np.full((len(self.all_tags) * len(self.all_tags), len(sequence)), None)
+        # initialize first column
+        pis[self.tag2idx['O'],0] = 0
+        for i in range(1, len(sequence)):
+            if sequence[i] not in self.word2idx.keys():
+                # handle unknown here
+                #predict 'NNP'
+                nnp_index = self.tag2idx['NNP']
+                pis[nnp_index,i] = np.max((pis[:,i-1] + np.log(self.bigrams[:, nnp_index])))
+                bps[nnp_index,i] = np.argmax((pis[:,i-1] + np.log(self.bigrams[:, nnp_index])))
+                continue
+            for tag in self.all_tags:
+                tag_idx = self.tag2idx[tag]
+                emission = self.lexical[tag_idx, self.word2idx[sequence[i]]]
+                best_prev_tag = np.argmax(pis[:,i-1] + np.log(self.bigrams[:,tag_idx]))
+                best_pi = np.max(pis[:,i-1] + np.log(self.bigrams[:,tag_idx]))
+                pis[tag_idx, i] = np.log(emission) + best_pi
+                bps[tag_idx, i] = best_prev_tag
+        best_final_tag_idx = np.argmax(pis[:,len(sequence)-1])
+        result[len(sequence)-1] = self.idx2tag[best_final_tag_idx]
+        best_prev_tag_idx = int(bps[best_final_tag_idx, len(sequence)-1])
+        for i in range(len(sequence)-2, 0, -1):
+            result[i] = self.idx2tag[best_prev_tag_idx]
+            best_prev_tag_idx = int(bps[best_prev_tag_idx,i])
+        result[0] = self.idx2tag[best_prev_tag_idx]
+        return result
+
     def viterbi(self, sequence):
         if self.lexical is None:
             self.get_emissions()
