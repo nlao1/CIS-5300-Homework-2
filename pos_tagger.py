@@ -597,12 +597,11 @@ class POSTagger():
         # initialize first column
         pis[self.tag2idx['O'],0] = 0
         for i in range(1, len(sequence)):
-            if sequence[i] not in self.word2idx.keys():
+            if sequence[i] not in self.word2idx:
                 # handle unknown here
-                #predict 'NNP'
-                nnp_index = self.tag2idx['NNP']
-                pis[nnp_index,i] = np.max((pis[:,i-1] + np.log(self.bigrams[:, nnp_index])))
-                bps[nnp_index,i] = np.argmax((pis[:,i-1] + np.log(self.bigrams[:, nnp_index])))
+                predicted_index = self.tag2idx[self.clf.predict_word(sequence[i])]
+                pis[predicted_index,i] = np.max((pis[:,i-1] + np.log(self.bigrams[:, predicted_index])))
+                bps[predicted_index,i] = np.argmax((pis[:,i-1] + np.log(self.bigrams[:, predicted_index])))
                 continue
             for tag in self.all_tags:
                 tag_idx = self.tag2idx[tag]
@@ -648,24 +647,14 @@ class POSTagger():
                     pis[doc_start_index * NUM_TAGS + tag_idx, i] = np.log(emission) + best_pi
                     bps[doc_start_index * NUM_TAGS + tag_idx, i] = best_prev_tag
             else: 
+                fixed_tag = None 
                 if sequence[i] not in self.word2idx.keys():
-                    # handle unknown here
-                    #predict 'NNP'
-                    nnp_index = self.tag2idx['NNP']
-                    for prev_tag in self.all_tags:
-                        prev_tag_idx = self.tag2idx[prev_tag]
-                        entry_idx = prev_tag_idx * NUM_TAGS + nnp_index
-                        best_pi = np.max(pis[prev_tag_idx::NUM_TAGS,i-1] + np.log(self.trigrams[:, prev_tag_idx,nnp_index]))
-                        if best_pi == -np.inf:
-                            raise ValueError(f"best_pi is -inf {i}", list(pis[prev_tag_idx::NUM_TAGS,i-1]), list(self.trigrams[:, prev_tag_idx,nnp_index]), sequence[i])
-                        best_prev_tag = np.argmax(pis[prev_tag_idx::NUM_TAGS,i-1] + np.log(self.trigrams[:, prev_tag_idx,nnp_index]))
-                        pis[entry_idx, i] = best_pi
-                        bps[entry_idx, i] = best_prev_tag
-                    continue
-                #handle unknowns
+                    fixed_tag = 'NNP'
+                # handle unknowns
                 for tag in self.all_tags:
-                    tag_idx = self.tag2idx[tag]
-                    emission = self.lexical[tag_idx, self.word2idx[sequence[i]]]
+                    tag_to_use = tag if fixed_tag is None else fixed_tag
+                    tag_idx = self.tag2idx[tag_to_use]
+                    emission = 1 if fixed_tag is not None else self.lexical[tag_idx, self.word2idx[sequence[i]]]
                     for prev_tag in self.all_tags:
                         prev_tag_idx = self.tag2idx[prev_tag]
                         entry_idx = prev_tag_idx * NUM_TAGS + tag_idx
@@ -721,13 +710,13 @@ class POSTagger():
             return self.viterbi(sequence)
 
 if __name__ == "__main__":
-    pos_tagger = POSTagger(BEAM, smoothing_method=LAPLACE)
+    pos_tagger = POSTagger(VITERBI, smoothing_method=GREEDY)
 
     train_data = load_data("data/train_x.csv", "data/train_y.csv")
     dev_data = load_data("data/dev_x.csv", "data/dev_y.csv")
     test_data = load_data("data/test_x.csv")
 
-    pos_tagger.train(train_data, ngram=3)
+    pos_tagger.train(train_data, ngram=2)
 
     # Experiment with your decoder using greedy decoding, beam search, viterbi...
 
