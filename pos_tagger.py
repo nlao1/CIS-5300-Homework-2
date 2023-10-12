@@ -10,8 +10,12 @@ from gensim.models import Word2Vec
 from gensim.models import FastText
 from typing import List
 from sklearn import svm
+from sklearn.decomposition import PCA
 from sklearn.neural_network import MLPClassifier
+from sklearn.ensemble import RandomForestClassifier
 from gensim.models.fasttext import load_facebook_vectors
+import xgboost as xgb
+import csv
 
 """ Contains the part of speech tagger class. """
 
@@ -33,40 +37,77 @@ class POSTagger_MLP():
     def __init__(self,documents):
         """Initializes the tagger model parameters and anything else necessary. """
         # Train Word2Vec model
-        #model = Word2Vec(documents, vector_size=300, window=4, min_count=1, workers=4)
-        # Save model
-        #model.save("my_word2vec_model.model")
-        # Load model
-        #self.model = Word2Vec.load("my_word2vec_model.model")
         model_path = "./GoogleNews-vectors-negative300.bin"
         self.model = gensim.models.KeyedVectors.load_word2vec_format(model_path, binary=True)
-        #self.model = load_facebook_vectors('./cc.en.300.bin')
-    def train(self,train_x,train_y):
-        #get the words & tag labels and create feature vectors with word2vec
-        filtered_words = []
-        filtered_labels = []
-        for word, label in zip(train_x, train_y):
-            if word == '-docstart-' or word == 'a' or word == 'of' or word == 'and' or word == 'to':
-                #print("ah")
-                pass
-            elif has_numbers(word):
-                #print( "ah!")
-                pass
-            elif is_punctuation(word):
-                pass
-                #print("ah~")
-            elif contains_dash(word):
-                vectors = self.get_word_vectors(word.split('-'))
-                filtered_words.append(np.sum(vectors,axis=0)/len(vectors))
-                filtered_labels.append(label)
-            else:
-                vector = self.get_word_vector(word)
-                # if np.any(vector):  # Check if the vector is non-zero
-                filtered_words.append(vector)  # Store the vector instead of the word
-                filtered_labels.append(label)
-        self.clf = MLPClassifier(hidden_layer_sizes=(100,50),max_iter=300)
-        self.clf.fit(filtered_words[:10000],filtered_labels[:10000])
+        # Fit PCA on training data once here
+        all_embeddings = [self.model[word] for sentence in documents for word in sentence if word in self.model]
+        self.embeddings_new_length = 100
+        self.pca = PCA(n_components=self.embeddings_new_length).fit(all_embeddings)
+        #Create set of tokens
+        self.build_vocab(documents)
+        #Create freq
+        freq = [sum(doc.count(word) for doc in documents) for word in self.vocab]
+        self.freq = np.array(freq)
+        #suffix vocab
+        self.build_suffix_indices(documents)
+        self.build_prefix_indices(documents)
+        print("initialized unknown word POS tagger...")
 
+    def build_vocab(self, documents):
+        """Build a vocabulary and map words to indices. Filter words that occur more than 10 times."""
+        self.vocab = list(set([word for sentence in documents for word in sentence]))
+        self.word2idx = {self.vocab[i]:i for i in range(len(self.vocab))}
+        self.idx2word = {v:k for k,v in self.word2idx.items()}
+
+    def build_suffix_indices(self, documents):
+        """Extract suffixes from words and map them to indices."""
+        # Implement suffix extraction logic
+        self.tri_suffixes = list(set([word[-3:] for sentence in documents for word in sentence]))
+        self.tri_suffixes.append('...')
+        self.tri_suffix2idx = {self.tri_suffixes[i]:i for i in range(len(self.tri_suffixes))}
+        self.idx2tri_suffix = {v:k for k,v in self.tri_suffix2idx.items()}
+        #do it for last two characters
+        self.bi_suffixes = list(set([word[-2:] for sentence in documents for word in sentence]))
+        self.bi_suffixes.append('...')
+        self.bi_suffix2idx = {self.bi_suffixes[i]:i for i in range(len(self.bi_suffixes))}
+        self.idx2bi_suffix = {v:k for k,v in self.bi_suffix2idx.items()}
+
+    def get_tri_suffix_index(self, word):
+        try:
+            return self.tri_suffix2idx[word[-3:]]
+        except KeyError:
+            return self.tri_suffix2idx['...']
+        
+    def get_bi_suffix_index(self,word):
+        try:
+            return self.bi_suffix2idx[word[-2:]]
+        except KeyError:
+            return self.tri_suffix2idx['...']
+    
+    def build_prefix_indices(self, documents):
+        """Extract prefixes from words and map them to indices."""
+        self.tri_prefixes = list(set([word[:3] for sentence in documents for word in sentence]))
+        self.tri_prefixes.append('...')
+        self.tri_prefix2idx = {self.tri_prefixes[i]: i for i in range(len(self.tri_prefixes))}
+        self.idx2tri_prefix = {v: k for k, v in self.tri_prefix2idx.items()}
+
+        self.bi_prefixes = list(set([word[:2] for sentence in documents for word in sentence]))
+        self.bi_prefixes.append('...')
+        self.bi_prefix2idx = {self.bi_prefixes[i]: i for i in range(len(self.bi_prefixes))}
+        self.idx2bi_prefix = {v: k for k, v in self.bi_prefix2idx.items()}
+
+    def get_tri_prefix_index(self, word):
+        try:
+            return self.tri_prefix2idx[word[:3]]
+        except KeyError:
+            return self.tri_prefix2idx['...']
+
+    def get_bi_prefix_index(self, word):
+        try:
+            return self.bi_prefix2idx[word[:2]]
+        except KeyError:
+            return self.bi_prefix2idx['...']
+        
     def predict_words(self,words):
         vector_words = self.get_word_vectors(words)
         return self.clf.predict(vector_words)
@@ -75,20 +116,83 @@ class POSTagger_MLP():
         vector_word = self.get_word_vector(word)
         return self.clf.predict([vector_word])[0]
     
-    def get_word_vector(self, word, vector_length=300):
+    def get_w2v_embedding(self, word, vector_length=300):
         try:
             return self.model[word]
         except KeyError:
+            return np.zeros(vector_length)
+            
+    def get_word_vector(self, word):
+        features = {
+            'tri_suffix_index': self.get_tri_suffix_index(word),
+            'bi_suffix_index': self.get_bi_suffix_index(word),
+            'tri_prefix_index': self.get_tri_prefix_index(word),
+            'bi_prefix_index': self.get_bi_prefix_index(word),
+            'is_capitalized': int(word[0].isupper()),
+            'contains_dash': int('-' in word),
+            'contains_number': int(any(char.isdigit() for char in word)),
+            # Add other features as needed
+        }
+        try:
+            full_embedding = self.model[word]
+            reduced_embedding = self.pca.transform([full_embedding])[0]
+             # Combine features: [reduced_embedding, suffix_index, is_capitalized, contains_dash, contains_number]
+            feature_vector = np.concatenate(([features['tri_suffix_index'],features['bi_suffix_index'],
+                                            features['is_capitalized'], features['contains_dash'],
+                                            features['contains_number']], reduced_embedding))
+            
+            return feature_vector
+        except KeyError:
             # Handle the case where the word is not in the vocabulary
             #print(f"{word} not found in word2vec")
-            return np.zeros(vector_length)
+            if contains_dash(word):
+                temp = word.split('-')
+                vectors = []
+                for word in temp:
+                    vectors.append(self.get_w2v_embedding(word))
+                full_embedding = np.sum(vectors,axis=0)/len(vectors)
+                reduced_embedding = self.pca.transform([full_embedding])[0]
+                feature_vector = np.concatenate(([features['tri_suffix_index'],features['bi_suffix_index'],
+                                            features['is_capitalized'], features['contains_dash'],
+                                            features['contains_number']], reduced_embedding))
+                return feature_vector
+            else:
+                reduced_embedding = np.zeros(self.embeddings_new_length)
+                feature_vector = np.concatenate(([features['tri_suffix_index'],features['bi_suffix_index'],
+                                            features['is_capitalized'], features['contains_dash'],
+                                            features['contains_number']], reduced_embedding))
+                return feature_vector
 
-    def get_word_vectors(self, words, vector_length=300):
+    def get_word_vectors(self, words):
         vectors = []
         for word in words:
-            vectors.append(self.get_word_vector(word,vector_length))
+            vectors.append(self.get_word_vector(word))
         return vectors
     
+    #assume np arrays
+    def train(self,train_x,train_y):
+        print("training unknown word POS tagger...")
+        #get the words & tag labels and create feature vectors with word2vec
+        filtered_words = []
+        filtered_labels = []
+        for word, label in zip(train_x, train_y):
+            if self.freq[self.word2idx[word]] >= 10:
+                #print("ah")
+                pass
+            else:
+                vector = self.get_word_vector(word)
+                # if np.any(vector):  # Check if the vector is non-zero
+                filtered_words.append(vector)  # Store the vector instead of the word
+                filtered_labels.append(label)
+        self.clf = MLPClassifier(hidden_layer_sizes=(100,100,50),max_iter=300)
+        # Utilize XGBoost
+        #self.clf = xgb.XGBClassifier(objective='multi:softprob',  # Softmax probability for multi-class classification
+        #    num_class=len(set(train_y))
+         #   )
+        self.clf.fit(np.array(filtered_words), np.array(filtered_labels))
+        #self.clf = RandomForestClassifier()
+        print("finished training unknown word POS tagger...")
+
 def evaluate(data, model):
     """Evaluates the POS model on some sentences and gold tags.
 
@@ -138,6 +242,33 @@ def evaluate(data, model):
 
     token_acc = sum([1 for i in range(n) for j in range(len(sentences[i])) if tags[i][j] == predictions[i][j]]) / n_tokens
     unk_token_acc = sum([1 for i in range(n) for j in range(len(sentences[i])) if tags[i][j] == predictions[i][j] and sentences[i][j] not in model.word2idx.keys()]) / unk_n_tokens
+    #adding my manual code
+    misclassification_count = 0
+    for i in range(n):
+        for j in range(len(sentences[i])):
+            # Check if the word is unknown and misclassified
+            if sentences[i][j] not in model.word2idx.keys() and tags[i][j] != predictions[i][j]:
+                print(f"Sentence: {i}, Word: {sentences[i][j]}, Actual Tag: {tags[i][j]}, Predicted Tag: {predictions[i][j]}")
+                misclassification_count += 1
+                # Stop after printing 10 misclassifications
+                if misclassification_count >= 10:
+                    break
+        if misclassification_count >= 10:
+            break
+    print("now look at words that are known but still predicted incorrecly.")
+    misclassification_count = 0 
+    for i in range(n):
+        for j in range(len(sentences[i])):
+            # Check if the word is unknown and misclassified
+            if sentences[i][j] in model.word2idx.keys() and tags[i][j] != predictions[i][j]:
+                print(f"Sentence: {i}, Word: {sentences[i][j]}, Actual Tag: {tags[i][j]}, Predicted Tag: {predictions[i][j]}")
+                misclassification_count += 1
+                # Stop after printing 10 misclassifications
+                if misclassification_count >= 10:
+                    break
+        if misclassification_count >= 10:
+            break
+    #end of manual code
     whole_sent_acc = 0
     num_whole_sent = 0
     for k in range(n):
@@ -180,6 +311,14 @@ class POSTagger():
         unigrams = [sum(x.count(tag) for x in self.data_tags) / self.num_words for tag in self.all_tags]
         self.unigrams = np.array(unigrams)
 
+    def get_unigrams_words(self):
+        """
+        Computes unigrams. 
+        Tip. Map each tag to an integer and store the unigrams in a numpy array. 
+        """
+        unigrams = [sum(x.count(word) for x in self.data_words) / self.num_words for word in self.all_words]
+        self.unigrams_words = np.array(unigrams)
+
     def get_bigrams(self):        
         """
         Computes bigrams. 
@@ -202,7 +341,9 @@ class POSTagger():
                     bigrams[self.tag2idx[curr], self.tag2idx[next_word]] += 1 / (self.unigrams[self.tag2idx[curr]] * self.num_words)
         if self.smoothing_method == LAPLACE:
             for i in range(len(bigrams)):
-                bigrams[i] += LAPLACE_FACTOR / len(self.all_tags) / (self.unigrams[i] * self.num_words + LAPLACE_FACTOR)
+                num_log = np.log(LAPLACE_FACTOR) - np.log(len(self.all_tags))
+                denom_log = np.log(self.unigrams[i] * self.num_words + LAPLACE_FACTOR)
+                bigrams[i] += np.exp(num_log - denom_log)
         elif self.smoothing_method == INTERPOLATION:
             lambda_1, lambda_2 = BIGRAM_LAMBDAS
             for i in range(len(bigrams)):
@@ -218,6 +359,7 @@ class POSTagger():
         if self.bigrams is None:
            self.get_bigrams()
         trigrams = np.zeros((len(self.all_tags), len(self.all_tags), len(self.all_tags)))
+        bigram_denominators = np.zeros((len(self.all_tags), len(self.all_tags)))
         def triplewise(iterable):
             "s -> (s0,s1,s2), (s1,s2,s3), (s2, s3, s4), ..."
             a, b, c = tee(iterable, 3)
@@ -228,11 +370,12 @@ class POSTagger():
         for document in self.data_tags:
             for curr, next_word, nextnext_word in triplewise(document):
                 if self.smoothing_method == LAPLACE:
-                    trigrams[self.tag2idx[curr], self.tag2idx[next_word], self.tag2idx[nextnext_word]] += 1 / (LAPLACE_FACTOR + self.bigrams[self.tag2idx[curr], self.tag2idx[next_word]] * self.unigrams[self.tag2idx[curr]] * self.num_words)
+                    trigrams[self.tag2idx[curr], self.tag2idx[next_word], self.tag2idx[nextnext_word]] += 1 
+                    bigram_denominators[self.tag2idx[curr], self.tag2idx[next_word]] += 1
                 else: 
                     trigrams[self.tag2idx[curr], self.tag2idx[next_word], self.tag2idx[nextnext_word]] += 1 / (self.bigrams[self.tag2idx[curr], self.tag2idx[next_word]] * self.unigrams[self.tag2idx[curr]] * self.num_words)
         if self.smoothing_method == LAPLACE:
-            trigrams += LAPLACE_FACTOR / self.num_words
+            trigrams = np.exp(np.log(trigrams + LAPLACE_FACTOR/len(self.all_tags)) - np.log(bigram_denominators[:,:,None] + LAPLACE_FACTOR))
         elif self.smoothing_method == INTERPOLATION:
             lambda_1, lambda_2, lambda_3 = TRIGRAM_LAMBDAS
             for i in range(len(trigrams)):
@@ -252,9 +395,30 @@ class POSTagger():
         for document_words, document_tags in zip(self.data_words, self.data_tags):
             for word, tag in zip(document_words, document_tags):
                 lexical[self.tag2idx[tag], self.word2idx[word]] += 1
-        lexical = np.log(lexical) - np.log(LAPLACE_FACTOR + self.num_words)
-        lexical = lexical - np.log(self.unigrams.reshape(-1,1))
+        # Apply unigram prior smoothing and convert to probabilities.
+        tag_counts = np.sum(lexical, axis=1, keepdims=True)
+        
+        # Ensure self.unigrams is a numpy array for efficient operations
+        if not isinstance(self.unigrams, np.ndarray):
+            self.unigrams = np.array(self.unigrams)
+
+        # Ensure unigrams are normalized to represent probabilities
+        unigram_probs = self.unigrams_words / np.sum(self.unigrams_words)
+
+        # Apply the smoothing
+        temp = None
+        if self.smoothing_method == LAPLACE:
+            temp = np.log(LAPLACE_FACTOR) +  np.log(1) - np.log(len(self.all_words))
+        else:
+            temp = np.log(LAPLACE_FACTOR) + np.log(unigram_probs)
+        lexical = np.log(lexical + np.exp(temp)) - np.log(tag_counts + LAPLACE_FACTOR)
+        # Convert to log-probabilities to avoid underflow and store.
         self.lexical = np.exp(lexical)
+
+        #old code
+        #lexical = np.log(lexical) - np.log(LAPLACE_FACTOR + self.num_words)
+        #lexical = lexical - np.log(self.unigrams.reshape(-1,1))
+        #self.lexical = np.exp(lexical)
 
     
 
@@ -280,8 +444,9 @@ class POSTagger():
         self.ngram = ngram
         self.clf = POSTagger_MLP(data[0])
         train_x, train_y = flatten_data(data[0],data[1])
-        self.clf.train(train_x,train_y)
+        self.clf.train(np.array(train_x),np.array(train_y))
         self.get_trigrams()
+        self.get_unigrams_words()
 
     def sequence_probability(self, sequence, tags):
         """Computes the probability of a tagged sequence given the emission/transition
@@ -358,11 +523,7 @@ class POSTagger():
         for i, word in enumerate(sequence):
             best_tag = None
             if word not in self.word2idx:
-                #best_tag = 'NNP'
-                if has_numbers(word):
-                    best_tag = 'CD'
-                else:
-                    best_tag = self.clf.predict_word(word)
+                best_tag = self.clf.predict_word(word)
             else: 
                 best_tag, prev_tag, prev_prev_tag = self.get_greedy_best_tag(word, prev_tag, prev_prev_tag)
             result.append(best_tag)
@@ -408,7 +569,7 @@ class POSTagger():
             #If word doesn't exist in dict, add arbitrary tag to each of the top-k decoded sequences 
             if word not in self.word2idx:
                 for i in range(BEAM_K):
-                    k_results[i].append('NNP')
+                    k_results[i].append(self.clf.predict_word(word))
             #Otherwise, find the best k tags for each of the top-k decoded sequences
             else:
                 #go through each top decoded sequence
@@ -560,7 +721,7 @@ class POSTagger():
             return self.viterbi(sequence)
 
 if __name__ == "__main__":
-    pos_tagger = POSTagger(VITERBI, smoothing_method=LAPLACE)
+    pos_tagger = POSTagger(BEAM, smoothing_method=LAPLACE)
 
     train_data = load_data("data/train_x.csv", "data/train_y.csv")
     dev_data = load_data("data/dev_x.csv", "data/dev_y.csv")
@@ -580,4 +741,10 @@ if __name__ == "__main__":
         test_predictions.extend(pos_tagger.inference(sentence))
     
     # Write them to a file to update the leaderboard
-    # TODO
+    # Write them to a file to update the leaderboard
+    with open('test_y.csv', mode='w', newline='') as file:
+        writer = csv.writer(file)
+        # Optionally write a header
+        writer.writerow(["id","predicted_tag"])
+        for i, tag in enumerate(test_predictions):
+            writer.writerow([i,tag])
