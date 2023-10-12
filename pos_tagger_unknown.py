@@ -98,7 +98,7 @@ class POSTagger_MLP():
         if model_type == "XGB":
             self.label_encoder = LabelEncoder()
         self.model_type = model_type
-        self.scaler = MinMaxScaler(feature_range=(-1, 1))
+        #self.scaler = MinMaxScaler(feature_range=(-1, 1))
         print("initialized unknown word POS tagger...")
 
     def build_vocab(self, documents):
@@ -169,7 +169,7 @@ class POSTagger_MLP():
 
     def predict_word(self,word):
         vector_word = self.get_word_vector(word)
-        vector_word = self.scaler.fit_transform([vector_word])[0]
+        #vector_word = self.scaler.fit_transform([vector_word])[0]
         if self.model_type == "MLP":
             return self.clf.predict([vector_word])[0]
         else:
@@ -180,7 +180,7 @@ class POSTagger_MLP():
     
     def inference(self,word):
         vector_word = self.get_word_vector(word)
-        vector_word = self.scaler.fit_transform([vector_word])[0]
+        #vector_word = self.scaler.fit_transform([vector_word])[0]
         if self.model_type == "MLP":
             return self.clf.predict([vector_word])[0]
         else:
@@ -258,7 +258,7 @@ class POSTagger_MLP():
                 # if np.any(vector):  # Check if the vector is non-zero
                 filtered_words.append(vector)  # Store the vector instead of the word
                 filtered_labels.append(label)
-        filtered_words = self.scaler.fit_transform(filtered_words)
+        #filtered_words = self.scaler.fit_transform(filtered_words)
         if self.model_type == "MLP":
             self.clf = MLPClassifier(hidden_layer_sizes=(100,100,50),max_iter=300)
             self.clf.fit(np.array(filtered_words), np.array(filtered_labels))

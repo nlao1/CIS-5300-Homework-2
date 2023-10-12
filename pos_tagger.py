@@ -529,7 +529,7 @@ if __name__ == "__main__":
     dev_data = load_data("data/dev_x.csv", "data/dev_y.csv")
     test_data = load_data("data/test_x.csv")
 
-    pos_tagger.train(train_data, ngram=2)
+    pos_tagger.train(train_data, ngram=3)
 
     # Experiment with your decoder using greedy decoding, beam search, viterbi...
 
