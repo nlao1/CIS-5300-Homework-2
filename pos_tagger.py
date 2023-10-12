@@ -50,6 +50,7 @@ class POSTagger_MLP():
         self.freq = np.array(freq)
         #suffix vocab
         self.build_suffix_indices(documents)
+        self.build_prefix_indices(documents)
         print("initialized unknown word POS tagger...")
 
     def build_vocab(self, documents):
@@ -76,11 +77,36 @@ class POSTagger_MLP():
             return self.tri_suffix2idx[word[-3:]]
         except KeyError:
             return self.tri_suffix2idx['...']
+        
     def get_bi_suffix_index(self,word):
         try:
             return self.bi_suffix2idx[word[-2:]]
         except KeyError:
             return self.tri_suffix2idx['...']
+    
+    def build_prefix_indices(self, documents):
+        """Extract prefixes from words and map them to indices."""
+        self.tri_prefixes = list(set([word[:3] for sentence in documents for word in sentence]))
+        self.tri_prefixes.append('...')
+        self.tri_prefix2idx = {self.tri_prefixes[i]: i for i in range(len(self.tri_prefixes))}
+        self.idx2tri_prefix = {v: k for k, v in self.tri_prefix2idx.items()}
+
+        self.bi_prefixes = list(set([word[:2] for sentence in documents for word in sentence]))
+        self.bi_prefixes.append('...')
+        self.bi_prefix2idx = {self.bi_prefixes[i]: i for i in range(len(self.bi_prefixes))}
+        self.idx2bi_prefix = {v: k for k, v in self.bi_prefix2idx.items()}
+
+    def get_tri_prefix_index(self, word):
+        try:
+            return self.tri_prefix2idx[word[:3]]
+        except KeyError:
+            return self.tri_prefix2idx['...']
+
+    def get_bi_prefix_index(self, word):
+        try:
+            return self.bi_prefix2idx[word[:2]]
+        except KeyError:
+            return self.bi_prefix2idx['...']
         
     def predict_words(self,words):
         vector_words = self.get_word_vectors(words)
@@ -100,6 +126,8 @@ class POSTagger_MLP():
         features = {
             'tri_suffix_index': self.get_tri_suffix_index(word),
             'bi_suffix_index': self.get_bi_suffix_index(word),
+            'tri_prefix_index': self.get_tri_prefix_index(word),
+            'bi_prefix_index': self.get_bi_prefix_index(word),
             'is_capitalized': int(word[0].isupper()),
             'contains_dash': int('-' in word),
             'contains_number': int(any(char.isdigit() for char in word)),
@@ -331,6 +359,7 @@ class POSTagger():
         if self.bigrams is None:
            self.get_bigrams()
         trigrams = np.zeros((len(self.all_tags), len(self.all_tags), len(self.all_tags)))
+        bigram_denominators = np.zeros((len(self.all_tags), len(self.all_tags)))
         def triplewise(iterable):
             "s -> (s0,s1,s2), (s1,s2,s3), (s2, s3, s4), ..."
             a, b, c = tee(iterable, 3)
@@ -341,11 +370,12 @@ class POSTagger():
         for document in self.data_tags:
             for curr, next_word, nextnext_word in triplewise(document):
                 if self.smoothing_method == LAPLACE:
-                    trigrams[self.tag2idx[curr], self.tag2idx[next_word], self.tag2idx[nextnext_word]] += 1 / (LAPLACE_FACTOR + self.bigrams[self.tag2idx[curr], self.tag2idx[next_word]] * self.unigrams[self.tag2idx[curr]] * self.num_words)
+                    trigrams[self.tag2idx[curr], self.tag2idx[next_word], self.tag2idx[nextnext_word]] += 1 
+                    bigram_denominators[self.tag2idx[curr], self.tag2idx[next_word]] += 1
                 else: 
                     trigrams[self.tag2idx[curr], self.tag2idx[next_word], self.tag2idx[nextnext_word]] += 1 / (self.bigrams[self.tag2idx[curr], self.tag2idx[next_word]] * self.unigrams[self.tag2idx[curr]] * self.num_words)
         if self.smoothing_method == LAPLACE:
-            trigrams += LAPLACE_FACTOR / self.num_words
+            trigrams = np.exp(np.log(trigrams + LAPLACE_FACTOR/len(self.all_tags)) - np.log(bigram_denominators[:,:,None] + LAPLACE_FACTOR))
         elif self.smoothing_method == INTERPOLATION:
             lambda_1, lambda_2, lambda_3 = TRIGRAM_LAMBDAS
             for i in range(len(trigrams)):
@@ -539,7 +569,7 @@ class POSTagger():
             #If word doesn't exist in dict, add arbitrary tag to each of the top-k decoded sequences 
             if word not in self.word2idx:
                 for i in range(BEAM_K):
-                    k_results[i].append('NNP')
+                    k_results[i].append(self.clf.predict_word(word))
             #Otherwise, find the best k tags for each of the top-k decoded sequences
             else:
                 #go through each top decoded sequence
@@ -652,19 +682,19 @@ class POSTagger():
             return self.viterbi(sequence)
 
 if __name__ == "__main__":
-    pos_tagger = POSTagger(GREEDY, smoothing_method=LAPLACE)
+    pos_tagger = POSTagger(BEAM, smoothing_method=LAPLACE)
 
     train_data = load_data("data/train_x.csv", "data/train_y.csv")
     dev_data = load_data("data/dev_x.csv", "data/dev_y.csv")
     test_data = load_data("data/test_x.csv")
 
-    pos_tagger.train(train_data, ngram=2)
+    pos_tagger.train(train_data, ngram=3)
 
     # Experiment with your decoder using greedy decoding, beam search, viterbi...
 
     # Here you can also implement experiments that compare different styles of decoding,
     # smoothing, n-grams, etc.
-    evaluate(dev_data[:1000], pos_tagger)
+    evaluate(dev_data, pos_tagger)
 
     # Predict tags for the test set
     test_predictions = []
