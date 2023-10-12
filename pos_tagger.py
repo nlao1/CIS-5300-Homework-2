@@ -461,33 +461,72 @@ class POSTagger():
 
    
     def viterbi_trigram(self, sequence):
+        NUM_TAGS = len(self.all_tags)
         result = [None for _ in range(len(sequence))]
-        pis = np.full((len(self.all_tags) * len(self.all_tags), len(sequence)), -np.inf)
-        bps = np.full((len(self.all_tags) * len(self.all_tags), len(sequence)), None)
+        # indexing scheme: prev_tag = i, curr_tag = j, i * NUM_TAGS + j
+        pis = np.full((NUM_TAGS * NUM_TAGS, len(sequence)), -np.inf)
+        bps = np.full((NUM_TAGS * NUM_TAGS, len(sequence)), None)
         # initialize first column
-        pis[self.tag2idx['O'],0] = 0
+        doc_start_index = self.tag2idx['O']
+        pis[NUM_TAGS * doc_start_index + doc_start_index,0] = 0
         for i in range(1, len(sequence)):
-            if sequence[i] not in self.word2idx.keys():
-                # handle unknown here
-                #predict 'NNP'
-                nnp_index = self.tag2idx['NNP']
-                pis[nnp_index,i] = np.max((pis[:,i-1] + np.log(self.bigrams[:, nnp_index])))
-                bps[nnp_index,i] = np.argmax((pis[:,i-1] + np.log(self.bigrams[:, nnp_index])))
-                continue
-            for tag in self.all_tags:
-                tag_idx = self.tag2idx[tag]
-                emission = self.lexical[tag_idx, self.word2idx[sequence[i]]]
-                best_prev_tag = np.argmax(pis[:,i-1] + np.log(self.bigrams[:,tag_idx]))
-                best_pi = np.max(pis[:,i-1] + np.log(self.bigrams[:,tag_idx]))
-                pis[tag_idx, i] = np.log(emission) + best_pi
-                bps[tag_idx, i] = best_prev_tag
-        best_final_tag_idx = np.argmax(pis[:,len(sequence)-1])
+            if i == 1:
+                if sequence[i] not in self.word2idx.keys():
+                    # handle unknown here
+                    #predict 'NNP'
+                    nnp_index = self.tag2idx['NNP']
+                    entry_idx = doc_start_index * NUM_TAGS + nnp_index
+                    pis[entry_idx,i] = np.max((pis[doc_start_index::NUM_TAGS,i-1] + np.log(self.bigrams[:, nnp_index])))
+                    bps[entry_idx,i] = np.argmax((pis[doc_start_index::NUM_TAGS,i-1] + np.log(self.bigrams[:, nnp_index])))
+                    continue
+                for tag in self.all_tags:
+                    tag_idx = self.tag2idx[tag]
+                    emission = self.lexical[tag_idx, self.word2idx[sequence[i]]]
+                    best_prev_tag = np.argmax(pis[doc_start_index::NUM_TAGS,i-1] + np.log(self.bigrams[:,tag_idx]))
+                    best_pi = np.max(pis[doc_start_index::NUM_TAGS,i-1] + np.log(self.bigrams[:,tag_idx]))
+                    pis[doc_start_index * NUM_TAGS + tag_idx, i] = np.log(emission) + best_pi
+                    bps[doc_start_index * NUM_TAGS + tag_idx, i] = best_prev_tag
+            else: 
+                if sequence[i] not in self.word2idx.keys():
+                    # handle unknown here
+                    #predict 'NNP'
+                    nnp_index = self.tag2idx['NNP']
+                    for prev_tag in self.all_tags:
+                        prev_tag_idx = self.tag2idx[prev_tag]
+                        entry_idx = prev_tag_idx * NUM_TAGS + nnp_index
+                        best_pi = np.max(pis[prev_tag_idx::NUM_TAGS,i-1] + np.log(self.trigrams[:, prev_tag_idx,nnp_index]))
+                        if best_pi == -np.inf:
+                            raise ValueError(f"best_pi is -inf {i}", list(pis[prev_tag_idx::NUM_TAGS,i-1]), list(self.trigrams[:, prev_tag_idx,nnp_index]), sequence[i])
+                        best_prev_tag = np.argmax(pis[prev_tag_idx::NUM_TAGS,i-1] + np.log(self.trigrams[:, prev_tag_idx,nnp_index]))
+                        pis[entry_idx, i] = best_pi
+                        bps[entry_idx, i] = best_prev_tag
+                    continue
+                #handle unknowns
+                for tag in self.all_tags:
+                    tag_idx = self.tag2idx[tag]
+                    emission = self.lexical[tag_idx, self.word2idx[sequence[i]]]
+                    for prev_tag in self.all_tags:
+                        prev_tag_idx = self.tag2idx[prev_tag]
+                        entry_idx = prev_tag_idx * NUM_TAGS + tag_idx
+                        best_pi = np.max(pis[prev_tag_idx::NUM_TAGS,i-1] + np.log(self.trigrams[:, prev_tag_idx,tag_idx]))
+                        best_prev_tag = np.argmax(pis[prev_tag_idx::NUM_TAGS,i-1] + np.log(self.trigrams[:, prev_tag_idx,tag_idx]))
+                        pis[entry_idx, i] = np.log(emission) + best_pi
+                        bps[entry_idx, i] = best_prev_tag
+        best_final_tags_entry = np.argmax(pis[:,len(sequence)-1])
+        best_final_tag_idx = best_final_tags_entry % NUM_TAGS
+        best_penultimate_tag_idx = best_final_tags_entry // NUM_TAGS
         result[len(sequence)-1] = self.idx2tag[best_final_tag_idx]
-        best_prev_tag_idx = int(bps[best_final_tag_idx, len(sequence)-1])
+        result[len(sequence)-2] = self.idx2tag[best_penultimate_tag_idx]
+        best_prev_tag_entry = int(bps[best_final_tags_entry, len(sequence)-1])
         for i in range(len(sequence)-2, 0, -1):
+            best_prev_tag_idx = best_prev_tag_entry % NUM_TAGS
             result[i] = self.idx2tag[best_prev_tag_idx]
-            best_prev_tag_idx = int(bps[best_prev_tag_idx,i])
-        result[0] = self.idx2tag[best_prev_tag_idx]
+            if bps[best_prev_tag_entry, i] is None and i > 1:
+                raise ValueError(f"None in bps {i}", list(bps[:,i]), list(pis[:, i]),  sequence[i])
+            elif i == 1:
+                break
+            best_prev_tag_entry = int(bps[best_prev_tag_entry,i])
+        result[0] = self.idx2tag[doc_start_index]
         return result
 
     def viterbi(self, sequence):
@@ -527,7 +566,7 @@ if __name__ == "__main__":
     dev_data = load_data("data/dev_x.csv", "data/dev_y.csv")
     test_data = load_data("data/test_x.csv")
 
-    pos_tagger.train(train_data, ngram=2)
+    pos_tagger.train(train_data, ngram=3)
 
     # Experiment with your decoder using greedy decoding, beam search, viterbi...
 
