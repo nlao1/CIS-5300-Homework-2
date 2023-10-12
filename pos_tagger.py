@@ -5,16 +5,7 @@ import time
 import string
 from utils import *
 from itertools import tee
-import gensim
-from gensim.models import Word2Vec
-from gensim.models import FastText
-from typing import List
-from sklearn import svm
-from sklearn.decomposition import PCA
-from sklearn.neural_network import MLPClassifier
-from sklearn.ensemble import RandomForestClassifier
-from gensim.models.fasttext import load_facebook_vectors
-import xgboost as xgb
+from pos_tagger_unknown import POSTagger_MLP
 import csv
 
 """ Contains the part of speech tagger class. """
@@ -33,166 +24,6 @@ def contains_dash(inputString):
 def is_punctuation(word):
     return word in string.punctuation
 
-class POSTagger_MLP():
-    def __init__(self,documents):
-        """Initializes the tagger model parameters and anything else necessary. """
-        # Train Word2Vec model
-        model_path = "./GoogleNews-vectors-negative300.bin"
-        self.model = gensim.models.KeyedVectors.load_word2vec_format(model_path, binary=True)
-        # Fit PCA on training data once here
-        all_embeddings = [self.model[word] for sentence in documents for word in sentence if word in self.model]
-        self.embeddings_new_length = 100
-        self.pca = PCA(n_components=self.embeddings_new_length).fit(all_embeddings)
-        #Create set of tokens
-        self.build_vocab(documents)
-        #Create freq
-        freq = [sum(doc.count(word) for doc in documents) for word in self.vocab]
-        self.freq = np.array(freq)
-        #suffix vocab
-        self.build_suffix_indices(documents)
-        self.build_prefix_indices(documents)
-        print("initialized unknown word POS tagger...")
-
-    def build_vocab(self, documents):
-        """Build a vocabulary and map words to indices. Filter words that occur more than 10 times."""
-        self.vocab = list(set([word for sentence in documents for word in sentence]))
-        self.word2idx = {self.vocab[i]:i for i in range(len(self.vocab))}
-        self.idx2word = {v:k for k,v in self.word2idx.items()}
-
-    def build_suffix_indices(self, documents):
-        """Extract suffixes from words and map them to indices."""
-        # Implement suffix extraction logic
-        self.tri_suffixes = list(set([word[-3:] for sentence in documents for word in sentence]))
-        self.tri_suffixes.append('...')
-        self.tri_suffix2idx = {self.tri_suffixes[i]:i for i in range(len(self.tri_suffixes))}
-        self.idx2tri_suffix = {v:k for k,v in self.tri_suffix2idx.items()}
-        #do it for last two characters
-        self.bi_suffixes = list(set([word[-2:] for sentence in documents for word in sentence]))
-        self.bi_suffixes.append('...')
-        self.bi_suffix2idx = {self.bi_suffixes[i]:i for i in range(len(self.bi_suffixes))}
-        self.idx2bi_suffix = {v:k for k,v in self.bi_suffix2idx.items()}
-
-    def get_tri_suffix_index(self, word):
-        try:
-            return self.tri_suffix2idx[word[-3:]]
-        except KeyError:
-            return self.tri_suffix2idx['...']
-        
-    def get_bi_suffix_index(self,word):
-        try:
-            return self.bi_suffix2idx[word[-2:]]
-        except KeyError:
-            return self.tri_suffix2idx['...']
-    
-    def build_prefix_indices(self, documents):
-        """Extract prefixes from words and map them to indices."""
-        self.tri_prefixes = list(set([word[:3] for sentence in documents for word in sentence]))
-        self.tri_prefixes.append('...')
-        self.tri_prefix2idx = {self.tri_prefixes[i]: i for i in range(len(self.tri_prefixes))}
-        self.idx2tri_prefix = {v: k for k, v in self.tri_prefix2idx.items()}
-
-        self.bi_prefixes = list(set([word[:2] for sentence in documents for word in sentence]))
-        self.bi_prefixes.append('...')
-        self.bi_prefix2idx = {self.bi_prefixes[i]: i for i in range(len(self.bi_prefixes))}
-        self.idx2bi_prefix = {v: k for k, v in self.bi_prefix2idx.items()}
-
-    def get_tri_prefix_index(self, word):
-        try:
-            return self.tri_prefix2idx[word[:3]]
-        except KeyError:
-            return self.tri_prefix2idx['...']
-
-    def get_bi_prefix_index(self, word):
-        try:
-            return self.bi_prefix2idx[word[:2]]
-        except KeyError:
-            return self.bi_prefix2idx['...']
-        
-    def predict_words(self,words):
-        vector_words = self.get_word_vectors(words)
-        return self.clf.predict(vector_words)
-
-    def predict_word(self,word):
-        vector_word = self.get_word_vector(word)
-        return self.clf.predict([vector_word])[0]
-    
-    def get_w2v_embedding(self, word, vector_length=300):
-        try:
-            return self.model[word]
-        except KeyError:
-            return np.zeros(vector_length)
-            
-    def get_word_vector(self, word):
-        features = {
-            'tri_suffix_index': self.get_tri_suffix_index(word),
-            'bi_suffix_index': self.get_bi_suffix_index(word),
-            'tri_prefix_index': self.get_tri_prefix_index(word),
-            'bi_prefix_index': self.get_bi_prefix_index(word),
-            'is_capitalized': int(word[0].isupper()),
-            'contains_dash': int('-' in word),
-            'contains_number': int(any(char.isdigit() for char in word)),
-            # Add other features as needed
-        }
-        try:
-            full_embedding = self.model[word]
-            reduced_embedding = self.pca.transform([full_embedding])[0]
-             # Combine features: [reduced_embedding, suffix_index, is_capitalized, contains_dash, contains_number]
-            feature_vector = np.concatenate(([features['tri_suffix_index'],features['bi_suffix_index'],
-                                            features['is_capitalized'], features['contains_dash'],
-                                            features['contains_number']], reduced_embedding))
-            
-            return feature_vector
-        except KeyError:
-            # Handle the case where the word is not in the vocabulary
-            #print(f"{word} not found in word2vec")
-            if contains_dash(word):
-                temp = word.split('-')
-                vectors = []
-                for word in temp:
-                    vectors.append(self.get_w2v_embedding(word))
-                full_embedding = np.sum(vectors,axis=0)/len(vectors)
-                reduced_embedding = self.pca.transform([full_embedding])[0]
-                feature_vector = np.concatenate(([features['tri_suffix_index'],features['bi_suffix_index'],
-                                            features['is_capitalized'], features['contains_dash'],
-                                            features['contains_number']], reduced_embedding))
-                return feature_vector
-            else:
-                reduced_embedding = np.zeros(self.embeddings_new_length)
-                feature_vector = np.concatenate(([features['tri_suffix_index'],features['bi_suffix_index'],
-                                            features['is_capitalized'], features['contains_dash'],
-                                            features['contains_number']], reduced_embedding))
-                return feature_vector
-
-    def get_word_vectors(self, words):
-        vectors = []
-        for word in words:
-            vectors.append(self.get_word_vector(word))
-        return vectors
-    
-    #assume np arrays
-    def train(self,train_x,train_y):
-        print("training unknown word POS tagger...")
-        #get the words & tag labels and create feature vectors with word2vec
-        filtered_words = []
-        filtered_labels = []
-        for word, label in zip(train_x, train_y):
-            if self.freq[self.word2idx[word]] >= 10:
-                #print("ah")
-                pass
-            else:
-                vector = self.get_word_vector(word)
-                # if np.any(vector):  # Check if the vector is non-zero
-                filtered_words.append(vector)  # Store the vector instead of the word
-                filtered_labels.append(label)
-        self.clf = MLPClassifier(hidden_layer_sizes=(100,100,50),max_iter=300)
-        # Utilize XGBoost
-        #self.clf = xgb.XGBClassifier(objective='multi:softprob',  # Softmax probability for multi-class classification
-        #    num_class=len(set(train_y))
-         #   )
-        self.clf.fit(np.array(filtered_words), np.array(filtered_labels))
-        #self.clf = RandomForestClassifier()
-        print("finished training unknown word POS tagger...")
-
 def evaluate(data, model):
     """Evaluates the POS model on some sentences and gold tags.
 
@@ -207,7 +38,7 @@ def evaluate(data, model):
     As per the write-up, you may find it faster to use multiprocessing (code included). 
     
     """
-    processes = 4
+    processes = 8
     sentences = data[0]
     tags = data[1]
     n = len(sentences)
@@ -442,9 +273,10 @@ class POSTagger():
         self.idx2word = {v:k for k,v in self.word2idx.items()}
         self.num_words = sum(len(d) for d in self.data_words)
         self.ngram = ngram
-        self.clf = POSTagger_MLP(data[0])
+        self.clf = POSTagger_MLP(data[0], model_type="XGB")
         train_x, train_y = flatten_data(data[0],data[1])
         self.clf.train(np.array(train_x),np.array(train_y))
+        #self.clf.load_model('./unknown_tagger.joblib')
         self.get_trigrams()
         self.get_unigrams_words()
 
@@ -483,9 +315,6 @@ class POSTagger():
             prev_prev_tag = prev_tag
             prev_tag = tag
         return np.exp(log_probability)
-    
-    def get_tag_of_unknown(self, word):
-        return self.clf.predict(word)
 
     def get_greedy_best_tag(self, word, prev_tag, prev_prev_tag):
         best_tag = None
@@ -682,13 +511,13 @@ class POSTagger():
             return self.viterbi(sequence)
 
 if __name__ == "__main__":
-    pos_tagger = POSTagger(BEAM, smoothing_method=LAPLACE)
+    pos_tagger = POSTagger(GREEDY, smoothing_method=INTERPOLATION)
 
     train_data = load_data("data/train_x.csv", "data/train_y.csv")
     dev_data = load_data("data/dev_x.csv", "data/dev_y.csv")
     test_data = load_data("data/test_x.csv")
 
-    pos_tagger.train(train_data, ngram=3)
+    pos_tagger.train(train_data, ngram=2)
 
     # Experiment with your decoder using greedy decoding, beam search, viterbi...
 
