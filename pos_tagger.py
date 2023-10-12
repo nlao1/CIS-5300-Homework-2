@@ -442,9 +442,9 @@ class POSTagger():
         self.idx2word = {v:k for k,v in self.word2idx.items()}
         self.num_words = sum(len(d) for d in self.data_words)
         self.ngram = ngram
-        # self.clf = POSTagger_MLP(data[0])
-        # train_x, train_y = flatten_data(data[0],data[1])
-        # self.clf.train(np.array(train_x),np.array(train_y))
+        self.clf = POSTagger_MLP(data[0])
+        train_x, train_y = flatten_data(data[0],data[1])
+        self.clf.train(np.array(train_x),np.array(train_y))
         self.get_trigrams()
         self.get_unigrams_words()
 
@@ -485,7 +485,7 @@ class POSTagger():
         return np.exp(log_probability)
     
     def get_tag_of_unknown(self, word):
-        return self.clf.predict(word)
+        return self.clf.predict_word(word)
 
     def get_greedy_best_tag(self, word, prev_tag, prev_prev_tag):
         best_tag = None
@@ -632,18 +632,19 @@ class POSTagger():
         for i in range(1, len(sequence)):
             fixed_tag = None 
             if sequence[i] not in self.word2idx.keys():
-                fixed_tag = 'NNP'
+                fixed_tag = self.get_tag_of_unknown(sequence[i])
             # handle unknowns
             for tag in self.all_tags:
                 tag_to_use = tag if fixed_tag is None else fixed_tag
                 tag_idx = self.tag2idx[tag_to_use]
                 emission = 1 if fixed_tag is not None else self.lexical[tag_idx, self.word2idx[sequence[i]]]
+                log_emission = np.log(emission)
                 for prev_tag in self.all_tags:
                     prev_tag_idx = self.tag2idx[prev_tag]
                     entry_idx = prev_tag_idx * NUM_TAGS + tag_idx
                     best_pi = np.max(pis[prev_tag_idx::NUM_TAGS,i-1] + np.log(self.trigrams[:, prev_tag_idx,tag_idx]))
                     best_prev_tag = np.argmax(pis[prev_tag_idx::NUM_TAGS,i-1] + np.log(self.trigrams[:, prev_tag_idx,tag_idx]))
-                    pis[entry_idx, i] = np.log(emission) + best_pi
+                    pis[entry_idx, i] = log_emission + best_pi
                     bps[entry_idx, i] = best_prev_tag
         last_tag = None
         second_last_tag = None
@@ -696,7 +697,7 @@ class POSTagger():
             return self.viterbi(sequence)
 
 if __name__ == "__main__":
-    pos_tagger = POSTagger(VITERBI, smoothing_method=LAPLACE)
+    pos_tagger = POSTagger(VITERBI, smoothing_method=INTERPOLATION)
 
     train_data = load_data("data/train_x.csv", "data/train_y.csv")
     dev_data = load_data("data/dev_x.csv", "data/dev_y.csv")
