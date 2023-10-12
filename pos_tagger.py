@@ -621,33 +621,15 @@ class POSTagger():
 
    
     def viterbi_trigram(self, sequence):
-        print("starting viterbi")
         NUM_TAGS = len(self.all_tags)
         result = [None for _ in range(len(sequence))]
         # indexing scheme: prev_tag = i, curr_tag = j, i * NUM_TAGS + j
         pis = np.full((NUM_TAGS * NUM_TAGS, len(sequence)), -np.inf)
-        bps = np.full((NUM_TAGS * NUM_TAGS, len(sequence)), None)
+        bps = np.full((NUM_TAGS * NUM_TAGS, len(sequence)), -np.inf)
         # initialize first column
         doc_start_index = self.tag2idx['O']
         pis[doc_start_index * NUM_TAGS:doc_start_index * (NUM_TAGS + 1):,0] = 0
         for i in range(1, len(sequence)):
-            # if i == 1:
-            #     if sequence[i] not in self.word2idx.keys():
-            #         # handle unknown here
-            #         #predict 'NNP'
-            #         nnp_index = self.tag2idx['NNP']
-            #         entry_idx = doc_start_index * NUM_TAGS + nnp_index
-            #         pis[entry_idx,i] = np.max((pis[doc_start_index::NUM_TAGS,i-1] + np.log(self.bigrams[:, nnp_index])))
-            #         bps[entry_idx,i] = np.argmax((pis[doc_start_index::NUM_TAGS,i-1] + np.log(self.bigrams[:, nnp_index])))
-            #         continue
-            #     for tag in self.all_tags:
-            #         tag_idx = self.tag2idx[tag]
-            #         emission = self.lexical[tag_idx, self.word2idx[sequence[i]]]
-            #         best_prev_tag = np.argmax(pis[doc_start_index::NUM_TAGS,i-1] + np.log(self.bigrams[:,tag_idx]))
-            #         best_pi = np.max(pis[doc_start_index::NUM_TAGS,i-1] + np.log(self.bigrams[:,tag_idx]))
-            #         pis[doc_start_index * NUM_TAGS + tag_idx, i] = np.log(emission) + best_pi
-            #         bps[doc_start_index * NUM_TAGS + tag_idx, i] = best_prev_tag
-            # else: 
             fixed_tag = None 
             if sequence[i] not in self.word2idx.keys():
                 fixed_tag = 'NNP'
@@ -666,21 +648,20 @@ class POSTagger():
         last_tag = None
         second_last_tag = None
         max_pi = -np.inf
-        print("starting backtracking")
         for i in range(NUM_TAGS):
             pi = np.max(pis[i::NUM_TAGS, len(sequence)-1] + self.trigrams[:, i, self.tag2idx['.']])
             entry = np.argmax(pis[i::NUM_TAGS, len(sequence)-1] + self.trigrams[:, i, self.tag2idx['.']])
             if pi > max_pi:
                 max_pi = pi
                 last_tag = self.idx2tag[i]
-                second_last_tag = entry // NUM_TAGS
+                second_last_tag = self.idx2tag[entry]
         result[len(sequence)-1] = last_tag
         result[len(sequence)-2] = second_last_tag
-        for i in range(len(sequence)-2, 0, -1):
-            best_prev_tag_idx = int(bps[self.tag2idx[result[i+2]] * NUM_TAGS + self.tag2idx[result[i+1]],i+2])
-            result[i] = self.idx2tag[best_prev_tag_idx]
-            if i == 1:
+        for i in range(len(sequence)-3, 0, -1):
+            if i == 0:
                 break
+            best_prev_tag_idx = int(bps[self.tag2idx[result[i+2]] + NUM_TAGS * self.tag2idx[result[i+1]],i+2])
+            result[i] = self.idx2tag[best_prev_tag_idx]
         result[0] = self.idx2tag[doc_start_index]
         return result
 
